@@ -4,35 +4,65 @@
 import asyncio
 
 from amaranth import *
-from amaranth.lib import io, cdc
+from amaranth.lib import io, cdc, wiring, stream
+from amaranth.lib.wiring import In, Out
 
 from glasgow.support import logging
-from glasgow.applet import *
+from glasgow.applet import GlasgowAppletV2
 
 
 # FPGA commands
 DO_SOMETHING      = 0b0001
 DO_SOMETHING_ELSE = 0b0010
 
-class LEDPanelSubtarget(Elaboratable):
-    def __init__(self, ports, out_fifo, in_fifo, rows, columns, sys_clk_freq):
-        self.ports = ports
-        self.out_fifo = out_fifo
-        self.in_fifo = in_fifo
-        self.sys_clk_freq = sys_clk_freq
+class LEDPanelInterface:
+    def __init__(self, logger: logging.Logger, assembly: AbstractAssembly, *,
+                 led_clk: GlasgowPin, led_strobe: GlasgowPin, oe: GlasgowPin, rgb1: GlasgowPin, rgb2: GlasgowPin, addr: GlasgowPin, rows: int, columns: int):
+        self._logger = logger
+        self._level = logging.DEBUG if self._logger.name == __name__ else logging.TRACE
+        ports = assembly.add_port_group(
+            led_clk=led_clk,
+            led_strobe=led_strobe,
+            oe=oe,
+            addr=addr,
+            rgb1=rgb1,
+            rgb2=rgb2,
+        )
+        component = assembly.add_submodule(
+            LEDPanelComponent(
+                ports=ports,
+                rows=rows,
+                columns=columns,
+                sys_clk_period=assembly.sys_clk_period
+            )
+        )
+        self._pipe = assembly.add_inout_pipe(component.o_stream, component.i_stream)
+        
+
+class LEDPanelComponent(wiring.Component):
+    i_stream: In(stream.Signature(8))
+    o_stream: Out(stream.Signature(8))
+
+    def __init__(self, ports, rows, columns, sys_clk_period):
+        self._ports = ports
+        self.rows = rows
+        self.columns = columns
+        self.sys_clk_period = sys_clk_period
+
+        super().__init__()
 
     def elaborate(self, platform):
         m = Module()
 
         di = Signal(4)
 
-        m.submodules.led_clk_buffer = led_clk_buffer = io.Buffer("o", self.ports.led_clk)
-        m.submodules.led_strobe_buffer = led_strobe_buffer = io.Buffer("o", self.ports.led_strobe)
-        m.submodules.oe_buffer = oe_buffer = io.Buffer("o", self.ports.oe)
+        m.submodules.led_clk_buffer = led_clk_buffer = io.Buffer("o", self._ports.led_clk)
+        m.submodules.led_strobe_buffer = led_strobe_buffer = io.Buffer("o", self._ports.led_strobe)
+        m.submodules.oe_buffer = oe_buffer = io.Buffer("o", self._ports.oe)
         
-        m.submodules.rgb1_buffer = rgb1_buffer = io.Buffer("o", self.ports.rgb1)
-        m.submodules.rgb2_buffer = rgb2_buffer = io.Buffer("o", self.ports.rgb2)
-        m.submodules.addr_buffer = addr_buffer = io.Buffer("o", self.ports.addr)
+        m.submodules.rgb1_buffer = rgb1_buffer = io.Buffer("o", self._ports.rgb1)
+        m.submodules.rgb2_buffer = rgb2_buffer = io.Buffer("o", self._ports.rgb2)
+        m.submodules.addr_buffer = addr_buffer = io.Buffer("o", self._ports.addr)
 
         m.d.comb += led_clk_buffer.oe.eq(1)
         m.d.comb += led_strobe_buffer.oe.eq(1)
@@ -46,7 +76,7 @@ class LEDPanelSubtarget(Elaboratable):
         return m
 
 
-class DisplayLEDPanelApplet(GlasgowApplet):
+class DisplayLEDPanelApplet(GlasgowAppletV2):
     preview = True
     logger = logging.getLogger(__name__)
     help = "display stuff on 32x32 LED panels (and similar)"
@@ -62,6 +92,7 @@ class DisplayLEDPanelApplet(GlasgowApplet):
     @classmethod
     def add_build_arguments(cls, parser, access):
         access.add_build_arguments(parser)
+        access.add_voltage_argument(parser)
         access.add_pins_argument(parser, "led_clk", default=True)
         access.add_pins_argument(parser, "led_strobe", default=True)
         access.add_pins_argument(parser, "oe", default=True)
@@ -71,28 +102,20 @@ class DisplayLEDPanelApplet(GlasgowApplet):
         parser.add_argument("--rows", help="Number of rows in display", type=int)
         parser.add_argument("--columns", help="Number of columns in display", type=int)
 
-    def build(self, target, args):
-        self.mux_interface = iface = target.multiplexer.claim_interface(self, args)
-        iface.add_subtarget(LEDPanelSubtarget(
-            ports=iface.get_port_group(
-                led_clk=args.led_clk,
-                led_strobe=args.led_strobe,
-                oe=args.oe,
-                addr=args.addr,
-                rgb1=args.rgb1,
-                rgb2=args.rgb2,
-            ),
-            rows=args.rows,
-            columns=args.columns,
-            out_fifo=iface.get_out_fifo(),
-            in_fifo=iface.get_in_fifo(),
-            sys_clk_freq=target.sys_clk_freq,
-        ))
+    def build(self, args):
+        with self.assembly.add_applet(self):
+            self.assembly.use_voltage(args.voltage)
+            self.ledpanel_interface = LEDPanelInterface(self.logger,
+                                                        self.assembly,
+                                                        led_clk=args.led_clk,
+                                                        led_strobe=args.led_strobe,
+                                                        oe=args.oe,
+                                                        rgb1=args.rgb1,
+                                                        rgb2=args.rgb2,
+                                                        addr=args.addr,
+                                                        rows=args.rows,
+                                                        columns=args.columns)
 
-    @classmethod
-    def add_run_arguments(cls, parser, access):
-        pass
-    
     async def run(self, device, args):
         iface = await device.demultiplexer.claim_interface(self, self.mux_interface, args=None)
 
