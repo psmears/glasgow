@@ -54,7 +54,12 @@ class LEDPanelComponent(wiring.Component):
     def elaborate(self, platform):
         m = Module()
 
-        di = Signal(4)
+        led_clk = Signal(1)
+        led_strobe = Signal(1)
+        oe = Signal(1)
+        rgb1 = Signal(3)
+        rgb2 = Signal(3)
+        addr = Signal(4)
 
         m.submodules.led_clk_buffer = led_clk_buffer = io.Buffer("o", self._ports.led_clk)
         m.submodules.led_strobe_buffer = led_strobe_buffer = io.Buffer("o", self._ports.led_strobe)
@@ -71,6 +76,47 @@ class LEDPanelComponent(wiring.Component):
         m.d.comb += rgb2_buffer.oe.eq(1)
         m.d.comb += addr_buffer.oe.eq(1)
 
+        m.d.comb += led_clk_buffer.o.eq(led_clk)
+        m.d.comb += led_strobe_buffer.o.eq(led_strobe)
+        m.d.comb += oe_buffer.o.eq(oe)
+        m.d.comb += rgb1_buffer.o.eq(rgb1)
+        m.d.comb += rgb2_buffer.o.eq(rgb2)
+        m.d.comb += addr_buffer.o.eq(addr)
+        
+
+        
+
+        row = Signal(range(self.rows))
+        col = Signal(range(self.columns))
+
+        with m.FSM(init="NEWROW"):
+            with m.State("NEWROW"):
+                # Blank output before updating addresses, to help avoid ghosting
+                m.d.sync += oe.eq(0)
+                m.d.sync += led_strobe.eq(0)
+                m.next = "SETADDR"
+            with m.State("SETADDR"):
+                m.d.sync += addr.eq(row)
+                m.d.sync += col.eq(0)
+                m.next = "SENDDATA"
+            with m.State("SENDDATA"):
+                # Assume data is accepted on falling edge of led_clk
+                m.d.sync += rgb1.eq(0b111) # Need actual data
+                m.d.sync += rgb2.eq(0b000) # Need actual data
+                m.d.sync += led_clk.eq(1)
+                m.next = "DATACLOCK"
+            with m.State("DATACLOCK"):
+                m.d.sync += led_clk.eq(0)
+                m.d.sync += col.eq(col+1)
+                with m.If(col == (self.columns - 1)):
+                    m.next = "ENDROW"
+                with m.Else():
+                    m.next = "SENDDATA"
+            with m.State("ENDROW"):
+                m.d.sync += oe.eq(1)
+                m.d.sync += led_strobe.eq(1)
+                m.d.sync += row.eq(row+1)
+                m.next = "NEWROW"
         
 
         return m
@@ -99,8 +145,8 @@ class DisplayLEDPanelApplet(GlasgowAppletV2):
         access.add_pins_argument(parser, "rgb1", width=3, default=True)
         access.add_pins_argument(parser, "rgb2", width=3, default=True)
         access.add_pins_argument(parser, "addr", width=4, default=True)
-        parser.add_argument("--rows", help="Number of rows in display", type=int)
-        parser.add_argument("--columns", help="Number of columns in display", type=int)
+        parser.add_argument("--rows", help="Number of rows in display", type=int, default=32)
+        parser.add_argument("--columns", help="Number of columns in display", type=int, default=32)
 
     def build(self, args):
         with self.assembly.add_applet(self):
