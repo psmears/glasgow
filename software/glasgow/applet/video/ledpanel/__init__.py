@@ -146,7 +146,7 @@ class LEDPanelSubtarget(Elaboratable):
         return m
 
 
-class DisplayLCDPanelApplet(GlasgowApplet):
+class DisplayLEDPanelApplet(GlasgowApplet):
     preview = True
     logger = logging.getLogger(__name__)
     help = "display stuff on 32x32 LED panels (and similar)"
