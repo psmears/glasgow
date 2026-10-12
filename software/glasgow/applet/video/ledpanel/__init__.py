@@ -26,122 +26,22 @@ class LEDPanelSubtarget(Elaboratable):
 
         di = Signal(4)
 
-        m.submodules.rs_buffer = rs_buffer = io.Buffer("o", self.ports.rs)
-        m.submodules.rw_buffer = rw_buffer = io.Buffer("o", self.ports.rw)
-        m.submodules.e_buffer = e_buffer = io.Buffer("o", self.ports.e)
-        m.submodules.d_buffer = d_buffer = io.Buffer("io", self.ports.d)
-        m.d.comb += d_buffer.oe.eq(~rw_buffer.o)
-        m.submodules += cdc.FFSynchronizer(d_buffer.i, di)
+        m.submodules.led_clk_buffer = led_clk_buffer = io.Buffer("o", self.ports.led_clk)
+        m.submodules.led_strobe_buffer = led_strobe_buffer = io.Buffer("o", self.ports.led_strobe)
+        m.submodules.oe_buffer = oe_buffer = io.Buffer("o", self.ports.oe)
+        
+        m.submodules.rgb1_buffer = rgb1_buffer = io.Buffer("o", self.ports.rgb1)
+        m.submodules.rgb2_buffer = rgb2_buffer = io.Buffer("o", self.ports.rgb2)
+        m.submodules.addr_buffer = addr_buffer = io.Buffer("o", self.ports.addr)
 
-        rx_setup_cyc = math.ceil(60e-9 * self.sys_clk_freq)
-        e_pulse_cyc  = math.ceil(500e-9 * self.sys_clk_freq)
-        e_wait_cyc   = math.ceil(700e-9 * self.sys_clk_freq)
-        cmd_wait_cyc = math.ceil(1.52e-3 * self.sys_clk_freq)
-        timer        = Signal(range(max([rx_setup_cyc, e_pulse_cyc, e_wait_cyc, cmd_wait_cyc])))
+        m.d.comb += led_clk_buffer.oe.eq(1)
+        m.d.comb += led_strobe_buffer.oe.eq(1)
+        m.d.comb += oe_buffer.oe.eq(1)
+        m.d.comb += rgb1_buffer.oe.eq(1)
+        m.d.comb += rgb2_buffer.oe.eq(1)
+        m.d.comb += addr_buffer.oe.eq(1)
 
-        cmd  = Signal(8)
-        rdata = Signal(8)
-        wdata = Signal(8)
-        msb  = Signal()
-
-        with m.FSM() as fsm:
-            with m.State("IDLE"):
-                m.d.sync += e_buffer.o.eq(0)
-                m.d.comb += self.out_fifo.r_en.eq(1)
-                with m.If(self.out_fifo.r_rdy):
-                    m.d.sync += cmd.eq(self.out_fifo.r_data)
-                    m.next = "COMMAND"
-
-            with m.State("COMMAND"):
-                m.d.sync += [
-                    msb.eq((cmd & XFER_BIT_HALF) == 0),
-                    rs_buffer.o.eq((cmd & XFER_BIT_DATA) != 0),
-                    rw_buffer.o.eq((cmd & XFER_BIT_READ) != 0),
-                ]
-                with m.If(cmd & XFER_BIT_WAIT):
-                    m.d.sync += timer.eq(cmd_wait_cyc)
-                    m.next = "WAIT"
-                with m.Elif(cmd & XFER_BIT_READ):
-                    m.d.sync += timer.eq(rx_setup_cyc)
-                    m.next = "READ-SETUP"
-                with m.Else():
-                    m.d.comb += self.out_fifo.r_en.eq(1)
-                    with m.If(self.out_fifo.r_rdy):
-                        m.d.sync += wdata.eq(self.out_fifo.r_data)
-                        m.next = "WRITE"
-
-            with m.State("WRITE"):
-                with m.If(timer == 0):
-                    m.d.sync += [
-                        e_buffer.o.eq(1),
-                        d_buffer.o.eq(Mux(msb, wdata[4:], wdata[:4])),
-                        timer.eq(e_pulse_cyc),
-                    ]
-                    m.next = "WRITE-HOLD"
-                with m.Else():
-                    m.d.sync += timer.eq(timer - 1)
-
-            with m.State("WRITE-HOLD"):
-                with m.If(timer == 0):
-                    m.d.sync += [
-                        e_buffer.o.eq(0),
-                        msb.eq(0),
-                        timer.eq(e_wait_cyc),
-                    ]
-                    with m.If(msb):
-                        m.next = "WRITE"
-                    with m.Else():
-                        m.next = "WAIT"
-                with m.Else():
-                    m.d.sync += timer.eq(timer - 1)
-
-            with m.State("READ-SETUP"):
-                with m.If(timer == 0):
-                    m.d.sync += [
-                        e_buffer.o.eq(1),
-                        timer.eq(e_pulse_cyc),
-                    ]
-                    m.next = "READ"
-                with m.Else():
-                    m.d.sync += timer.eq(timer - 1)
-
-            with m.State("READ"):
-                with m.If(timer == 0):
-                    with m.If(((cmd & XFER_BIT_DATA) == 0) & msb & di[3]):
-                        # BF=1, wait until it goes low
-                        pass
-                    with m.Else():
-                        m.d.sync += [
-                            e_buffer.o.eq(0),
-                            msb.eq(0),
-                            timer.eq(e_wait_cyc),
-                        ]
-                        with m.If(msb):
-                            m.d.sync += rdata[4:].eq(di)
-                            m.next = "READ-SETUP"
-                        with m.Else():
-                            m.d.sync += rdata[:4].eq(di)
-                            m.next = "READ-PROCESS"
-                with m.Else():
-                    m.d.sync += timer.eq(timer - 1)
-
-            with m.State("READ-PROCESS"):
-                with m.If(cmd & XFER_BIT_DATA):
-                    m.d.comb += [
-                        self.in_fifo.w_data.eq(rdata),
-                        self.in_fifo.w_en.eq(1),
-                    ]
-                    with m.If(self.in_fifo.w_rdy):
-                        m.next = "WAIT"
-                with m.Else():
-                    # done reading status register, ignore it and continue
-                    m.next = "WAIT"
-
-            with m.State("WAIT"):
-                with m.If(timer == 0):
-                    m.next = "IDLE"
-                with m.Else():
-                    m.d.sync += timer.eq(timer - 1)
+        
 
         return m
 
@@ -178,6 +78,7 @@ class DisplayLEDPanelApplet(GlasgowApplet):
                 led_clk=args.led_clk,
                 led_strobe=args.led_strobe,
                 oe=args.oe,
+                addr=args.addr,
                 rgb1=args.rgb1,
                 rgb2=args.rgb2,
             ),
@@ -190,10 +91,8 @@ class DisplayLEDPanelApplet(GlasgowApplet):
 
     @classmethod
     def add_run_arguments(cls, parser, access):
-        parser.add_argument(
-            "--reset", default=False, action="store_true",
-            help="power-cycle the port on startup")
-
+        pass
+    
     async def run(self, device, args):
         iface = await device.demultiplexer.claim_interface(self, self.mux_interface, args=None)
 
