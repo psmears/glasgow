@@ -106,16 +106,24 @@ class LEDPanelComponent(wiring.Component):
             with m.State("SENDDATA"):
                 # Assume data is accepted on falling edge of led_clk
                 flash = Signal()
-                r = Signal()
-                g = Signal()
-                b = Signal()
+                r1 = Signal()
+                g1 = Signal()
+                b1 = Signal()
+                r2 = Signal()
+                g2 = Signal()
+                b2 = Signal()
                 m.d.comb += flash.eq(pwm & 1)
-                m.d.comb += r.eq( (row == 3) | (row == 4) | (((row == 1) | (row == 2) | (row == 5) | (row == 6)) & 1))
-                m.d.comb += g.eq( (row == 3) | (row == 4) | (((row == 1) | (row == 2) | (row == 5) | (row == 6)) & flash))
-                m.d.comb += b.eq( ~((row == 1) | (row == 2) | (row == 5) | (row == 6)) | flash)
                 
-                m.d.sync += rgb1.eq(Cat(r,g,b))
-                m.d.sync += rgb2.eq(Cat(r,g,b))
+                m.d.comb += r1.eq(row >= 7)
+                m.d.comb += g1.eq(((row >= 7) & flash) | (row >= 13))
+                m.d.comb += b1.eq((row <7) | (row >= 13) | flash)
+
+                m.d.comb += r2.eq(row < 9)
+                m.d.comb += g2.eq((row <= 2) | ((row <= 8)&flash))
+                m.d.comb += b2.eq((row <= 2) | (row > 8) | flash)
+                
+                m.d.sync += rgb1.eq(Cat(r1,g1,b1))
+                m.d.sync += rgb2.eq(Cat(r2,g2,b2))
                 m.d.sync += led_clk.eq(1)
                 m.next = "DATACLOCK"
             with m.State("DATACLOCK"):
