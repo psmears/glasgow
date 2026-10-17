@@ -49,6 +49,7 @@ class LEDPanelComponent(wiring.Component):
         self.columns = columns
         self.sys_clk_period = sys_clk_period
 
+
         super().__init__()
 
     def elaborate(self, platform):
@@ -88,11 +89,14 @@ class LEDPanelComponent(wiring.Component):
 
         row = Signal(range(self.rows))
         col = Signal(range(self.columns))
+        MAX_PWM = 14
+        pwm = Signal(range(MAX_PWM + 1))
 
         with m.FSM(init="NEWROW"):
             with m.State("NEWROW"):
                 # Blank output before updating addresses, to help avoid ghosting
-                m.d.sync += oe.eq(0)
+                # ("OE" pin is active low)
+                m.d.sync += oe.eq(1)
                 m.d.sync += led_strobe.eq(0)
                 m.next = "SETADDR"
             with m.State("SETADDR"):
@@ -101,8 +105,17 @@ class LEDPanelComponent(wiring.Component):
                 m.next = "SENDDATA"
             with m.State("SENDDATA"):
                 # Assume data is accepted on falling edge of led_clk
-                m.d.sync += rgb1.eq(0b111) # Need actual data
-                m.d.sync += rgb2.eq(0b000) # Need actual data
+                flash = Signal()
+                r = Signal()
+                g = Signal()
+                b = Signal()
+                m.d.comb += flash.eq(pwm & 1)
+                m.d.comb += r.eq( (row == 3) | (row == 4) | (((row == 1) | (row == 2) | (row == 5) | (row == 6)) & 1))
+                m.d.comb += g.eq( (row == 3) | (row == 4) | (((row == 1) | (row == 2) | (row == 5) | (row == 6)) & flash))
+                m.d.comb += b.eq( ~((row == 1) | (row == 2) | (row == 5) | (row == 6)) | flash)
+                
+                m.d.sync += rgb1.eq(Cat(r,g,b))
+                m.d.sync += rgb2.eq(Cat(r,g,b))
                 m.d.sync += led_clk.eq(1)
                 m.next = "DATACLOCK"
             with m.State("DATACLOCK"):
@@ -113,12 +126,23 @@ class LEDPanelComponent(wiring.Component):
                 with m.Else():
                     m.next = "SENDDATA"
             with m.State("ENDROW"):
-                m.d.sync += oe.eq(1)
+                m.d.sync += oe.eq(0)
                 m.d.sync += led_strobe.eq(1)
-                m.d.sync += row.eq(row+1)
-                m.next = "NEWROW"
+                m.d.sync += pwm.eq(pwm+1)
+                with m.If(pwm == MAX_PWM):
+                    m.d.sync += pwm.eq(0)
+                    m.d.sync += row.eq(row+1)
+                    m.next = "NEWROW"
+                with m.Else():
+                    m.next = "SENDDATA"
         
 
+        # second_count = int(1.0/self.sys_clk_period)
+        # counter=Signal(range(second_count+1))
+        # m.d.sync += led_clk.eq(counter < (second_count//2))
+        # m.d.sync += counter.eq(Mux(counter < second_count, counter+1, 0))
+
+                    
         return m
 
 
@@ -162,56 +186,12 @@ class DisplayLEDPanelApplet(GlasgowAppletV2):
                                                         rows=args.rows,
                                                         columns=args.columns)
 
-    async def run(self, device, args):
-        iface = await device.demultiplexer.claim_interface(self, self.mux_interface, args=None)
-
-        if args.reset:
-            await device.set_voltage("AB", 0.0)
-            await asyncio.sleep(0.3)
-        await device.set_voltage("AB", 5.0)
-        await asyncio.sleep(0.040) # wait 40ms after reset
-
-        # TODO: abstract this away into a HD44780Interface
-        async def init(command, poll):
-            await iface.write([XFER_INIT, command, XFER_POLL if poll else XFER_WAIT])
-
-        async def cmd(command):
-            await iface.write([XFER_COMMAND, command, XFER_POLL])
-
-        async def data(bytes):
-            for byte in bytes:
-                await iface.write([XFER_WRITE, byte, XFER_POLL])
-
-        # HD44780 may be in either 4-bit or 8-bit mode and we don't know which.
-        # The following sequence brings it to 4-bit mode regardless of which one it was in.
-        await init(0x03, poll=False) # either CMD_FUNCTION_SET|BIT_IFACE_8BIT or CMD_CURSOR_HOME
-                                     # or the second nibble of an unknown command/data
-        await init(0x03, poll=False) # either CMD_FUNCTION_SET|BIT_IFACE_8BIT or CMD_CURSOR_HOME
-                                     # or the second nibble of CMD_FUNCTION_SET (the set bits
-                                     # are ignored)
-        await init(0x03, poll=False) # CMD_FUNCTION_SET|BIT_IFACE_8BIT
-        await init(0x02, poll=True)  # CMD_FUNCTION_SET
-
-        await cmd(CMD_FUNCTION_SET|BIT_DISPLAY_2_LINE)
-        await cmd(CMD_DISPLAY_ON_OFF|BIT_DISPLAY_ON|BIT_CURSOR_BLINK)
-        await cmd(CMD_CLEAR_DISPLAY)
-        await cmd(CMD_ENTRY_MODE|BIT_CURSOR_INC_POS)
-        await data(b"Hello")
-        await cmd(CMD_DDRAM_ADDRESS|0x40)
-        await data(b"  World")
-        await iface.flush()
-        await asyncio.sleep(1)
-
-        from datetime import datetime
+    async def run(self, args):
         while True:
             await asyncio.sleep(1)
-            await cmd(CMD_DDRAM_ADDRESS|0x00)
-            await data(datetime.now().strftime("%H:%M:%S").encode("ascii"))
-            await cmd(CMD_DDRAM_ADDRESS|0x40)
-            await data(datetime.now().strftime("%y-%m-%d").encode("ascii"))
-            await iface.flush()
 
     # @classmethod
     # def tests(cls):
     #     from . import test
     #     return test.DisplayHD44780AppletTestCase
+# glasgow run video-ledpanel --led-clk A0 --led-strobe A1 --oe A2 --addr A3,A4,A5,A6 --rgb1 B0,B1,B2 --rgb2 B3,B4,B5 --voltage 5
