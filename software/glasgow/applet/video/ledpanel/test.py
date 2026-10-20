@@ -29,7 +29,7 @@ class DisplayLEDPanelAppletTestCase(GlasgowAppletV2TestCase, applet=DisplayLEDPa
     def test_bulld(self):
         self.assertBuilds("--led-clk A0 --led-strobe A1 --oe A2 --addr A3,A4,A5,A6 --rgb1 B0,B1,B2 --rgb2 B3,B4,B5 --voltage 5")
 
-    bytes_remaining = [0xff, 0xf1, 0xf3, 0,1,2,3]
+    bytes_remaining = [0xff, 0xf1, 0xf3, 0x21, 0x42, 0x93, 0x37, 0xfe, 0xfe]
 
     async def send_input(self, ctx):
         while self.bytes_remaining:
@@ -43,8 +43,8 @@ class DisplayLEDPanelAppletTestCase(GlasgowAppletV2TestCase, applet=DisplayLEDPa
         await ctx.tick()
         await ctx.tick()
         for i in range(0, 10):
-            v = self.dut.mem.data[i]
-            print(ctx.get(v).r)
+            v = ctx.get(self.dut.mem.data[i])
+            print("RGB: ", v.r, v.g, v.b)
         
 
     def test_input(self):

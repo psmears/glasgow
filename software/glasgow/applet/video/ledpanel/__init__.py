@@ -154,7 +154,7 @@ class LEDPanelController(wiring.Component):
         with m.If(self.i_stream.valid):
             with m.If(command.set_value.set_r |
                       command.set_value.set_g |
-                      command.set_value.set_g):
+                      command.set_value.set_b):
                 m.d.sync += Print("Command:", command)
                 # This is a command to set the current pixel value, and
                 # possibly write it to memory and move on
