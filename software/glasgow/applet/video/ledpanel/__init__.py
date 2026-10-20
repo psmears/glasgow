@@ -37,9 +37,9 @@ pixel_r = unsigned(BPP_R)
 pixel_g = unsigned(BPP_G)
 pixel_b = unsigned(BPP_B)
 pixel_shape = data.StructLayout({
-    "red": pixel_r,
-    "green": pixel_g,
-    "blue": pixel_b,
+    "r": pixel_r,
+    "g": pixel_g,
+    "b": pixel_b,
 })
 
 # Command layout
@@ -124,7 +124,7 @@ class LEDPanelController(wiring.Component):
         m = Module()
 
         # Don't write to the memory by default
-        m.d.sync += wr_port.en.eq(0)
+        m.d.sync += self.wr_port.en.eq(0)
 
         screen_shape = Shape.cast(range(MAX_SCREENS))
         row_shape = Shape.cast(range(self.dimensions.rows))
@@ -137,42 +137,43 @@ class LEDPanelController(wiring.Component):
             "column": column_shape,
         })
 
-        mem = Memory(shape=pixel, depth=1<<pixel_pos.width, init=[])
-
         writing_screen = Signal(screen_shape, init=0)
         writing_row = Signal(row_shape, init=0)
         writing_super_row = Signal(super_row_shape, init=0)
         writing_column = Signal(column_shape, init=0)
         current_pixel = Signal(pixel_shape, init={
-            "red": 0,
-            "green": 0,
-            "blue": 0
+            "r": 0,
+            "g": 0,
+            "b": 0
         })
 
         m.d.comb += self.i_stream.ready.eq(1)
         command = Signal(command_shape)
         m.d.comb += command.eq(self.i_stream.payload)
         
-        with m.If(i_stream.valid):
+        with m.If(self.i_stream.valid):
             with m.If(command.set_value.set_r |
                       command.set_value.set_g |
                       command.set_value.set_g):
+                m.d.sync += Print("Command:", command)
                 # This is a command to set the current pixel value, and
                 # possibly write it to memory and move on
                 next_pixel = Signal(pixel_shape)
-                m.d.comb += next_pixel.eq({
-                    "red": Mux(command.set_value.set_r, command.set_value.value, current_pixel.r),
-                    "green": Mux(command.set_value.set_g, command.set_value.value, current_pixel.g),
-                    "blue": Mux(command.set_value.set_b, command.set_value.value, current_pixel.b),
-                })
+                m.d.comb += next_pixel.eq(current_pixel)
+                with m.If(command.set_value.set_r):
+                    m.d.comb += next_pixel.r.eq(command.set_value.value)
+                with m.If(command.set_value.set_g):
+                    m.d.comb += next_pixel.g.eq(command.set_value.value)
+                with m.If(command.set_value.set_b):
+                    m.d.comb += next_pixel.b.eq(command.set_value.value)
                 m.d.sync += current_pixel.eq(next_pixel)
                 
                 with m.If(command.set_value.advance):
                     # Write to memory
-                    m.d.sync += wr_port.en.eq(1)
-                    m.d.sync += wr_port.data.eq(next_pixel)
-                    m.d.sync += wr_port.addr.eq(Cat(writing_column, writing_row, writing_super_row))
-                    # @@@ set address!
+                    m.d.sync += self.wr_port.en.eq(1)
+                    m.d.sync += self.wr_port.data.eq(next_pixel)
+                    m.d.sync += self.wr_port.addr.eq(Cat(writing_column, writing_row, writing_super_row))
+                    m.d.sync += Print("Writing ", next_pixel, "to", writing_column, writing_row, writing_super_row)
 
                     # Advance to next pixel
                     m.d.sync += writing_column.eq(writing_column + 1)
