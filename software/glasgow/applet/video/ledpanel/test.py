@@ -1,5 +1,5 @@
 from glasgow.applet import GlasgowAppletV2TestCase, synthesis_test, applet_v2_hardware_test
-from . import DisplayLEDPanelApplet, LEDPanelController, LEDPanelDimensions
+from . import DisplayLEDPanelApplet, LEDPanelController, LEDPanelDimensions, pixel_shape
 from amaranth import *
 from amaranth.sim import Simulator
 from amaranth.lib import wiring, stream
@@ -18,7 +18,7 @@ class LEDPanelControllerTester(wiring.Component):
         m.submodules.controller = controller = LEDPanelController(self.dimensions)
         m.submodules.mem = self.mem = mem = self.dimensions.get_memory()
 
-        wiring.connect(m, controller.wr_port, mem.write_port())
+        wiring.connect(m, controller.wr_port, mem.write_port(granularity=1))
         wiring.connect(m, flipped(self.i_stream), controller.i_stream)
 
         return m
@@ -29,7 +29,9 @@ class DisplayLEDPanelAppletTestCase(GlasgowAppletV2TestCase, applet=DisplayLEDPa
     def test_bulld(self):
         self.assertBuilds("--led-clk A0 --led-strobe A1 --oe A2 --addr A3,A4,A5,A6 --rgb1 B0,B1,B2 --rgb2 B3,B4,B5 --voltage 5")
 
-    bytes_remaining = [0xff, 0xf1, 0xf3, 0x21, 0x42, 0x93, 0x37, 0xfe, 0xfe]
+    bytes_remaining = [0xfb, 0xf1, 0xf3, 0x21, 0x42, 0x93, 0x37, 0xfe, 0xfe,
+                       0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9,
+                       0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff]
 
     async def send_input(self, ctx):
         while self.bytes_remaining:
@@ -42,9 +44,10 @@ class DisplayLEDPanelAppletTestCase(GlasgowAppletV2TestCase, applet=DisplayLEDPa
         await ctx.tick()
         await ctx.tick()
         await ctx.tick()
-        for i in range(0, 10):
-            v = ctx.get(self.dut.mem.data[i])
-            print("RGB: ", v.r, v.g, v.b)
+        for i in range(0, 32):
+            v0 = ctx.get(self.dut.mem.data[i][0])
+            v1 = ctx.get(self.dut.mem.data[i][1])
+            print("RGB: ", v0.r, v0.g, v0.b, "/", v1.r, v1.g, v1.b)
         
 
     def test_input(self):

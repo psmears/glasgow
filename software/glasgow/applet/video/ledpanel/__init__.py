@@ -70,9 +70,13 @@ class LEDPanelDimensions:
             "screen": Shape.cast(range(MAX_SCREENS)),
         })
 
+    @property
+    def memory_shape(self):
+        return data.ArrayLayout(pixel_shape, self.super_rows)
+
     def get_memory(self):
         return memory.Memory(
-            shape=pixel_shape,
+            shape=self.memory_shape,
             depth=1<<self.addr_shape.size,
             init=[])
 
@@ -80,8 +84,9 @@ class LEDPanelDimensions:
 class LEDMemorySignature(wiring.Signature):
     def __init__(self, dimensions: LEDPanelDimensions):
         wr_port_sig = memory.WritePort.Signature(
-            addr_width = 5, # @@@
-            shape=pixel_shape,
+            addr_width = dimensions.addr_shape.size,
+            shape = dimensions.memory_shape,
+            granularity = 1,
         )
         super().__init__(wr_port_sig.members)
 
@@ -170,9 +175,10 @@ class LEDPanelController(wiring.Component):
                 
                 with m.If(command.set_value.advance):
                     # Write to memory
-                    m.d.sync += self.wr_port.en.eq(1)
-                    m.d.sync += self.wr_port.data.eq(next_pixel)
-                    m.d.sync += self.wr_port.addr.eq(Cat(writing_column, writing_row, writing_super_row))
+                    m.d.sync += self.wr_port.en.bit_select(writing_super_row, 1).eq(1)
+                    for i in range(self.dimensions.super_rows):
+                        m.d.sync += self.wr_port.data[i].eq(next_pixel)
+                    m.d.sync += self.wr_port.addr.eq(Cat(writing_column, writing_row, writing_screen))
                     m.d.sync += Print("Writing ", next_pixel, "to", writing_column, writing_row, writing_super_row)
 
                     # Advance to next pixel
