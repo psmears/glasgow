@@ -187,6 +187,11 @@ class LEDPanelController(wiring.Component):
                         m.d.sync += writing_row.eq(writing_row + 1)
                         with m.If((~writing_row) == 0):
                             m.d.sync += writing_super_row.eq(writing_super_row + 1)
+
+            with m.Else():
+                with m.Switch(command.command):
+                    with m.Case(CMD_SET_WRITE, CMD_SET_WRITE | 1):
+                        m.d.sync += writing_screen.eq(command.command[0])
         return m
             
 
