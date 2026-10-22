@@ -4,6 +4,7 @@
 *.gtkw
 *.surf.ron
 *.log
+*~
 /*.v
 /*.bin
 /*.zip
@@ -14,3 +15,4 @@
 /*.bit
 /*.json
 /*.csv
+

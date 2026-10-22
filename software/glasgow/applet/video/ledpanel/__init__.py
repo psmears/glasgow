@@ -22,6 +22,11 @@ CMD_MOVE_UP    = 0b1000
 CMD_MOVE_DOWN  = 0b1001
 CMD_MOVE_LEFT  = 0b1010
 CMD_MOVE_RIGHT = 0b1011
+CMD_POS_STORE  = 0b1100
+CMD_POS_RCL_X  = 0b1101
+CMD_POS_RCL_Y  = 0b1101
+
+
 
 # Colour resolution in bits per pixel
 BPP = 4
@@ -123,6 +128,8 @@ class LEDPanelController(wiring.Component):
         super().__init__({
             "i_stream": In(stream.Signature(8)),
             "wr_port": In(LEDMemorySignature(self.dimensions)),
+            "next_screen": Out(unsigned(1)),
+            "enable_display": Out(unsigned(1)),
         })
 
     def elaborate(self, platform):
@@ -151,6 +158,9 @@ class LEDPanelController(wiring.Component):
             "g": 0,
             "b": 0
         })
+        stored_row = Signal(row_shape, init=0)
+        stored_super_row = Signal(super_row_shape, init=0)
+        stored_column = Signal(column_shape, init=0)
 
         m.d.comb += self.i_stream.ready.eq(1)
         command = Signal(command_shape)
@@ -192,6 +202,36 @@ class LEDPanelController(wiring.Component):
                 with m.Switch(command.command):
                     with m.Case(CMD_SET_WRITE, CMD_SET_WRITE | 1):
                         m.d.sync += writing_screen.eq(command.command[0])
+                    with m.Case(CMD_SET_SCREEN, CMD_SET_SCREEN | 1):
+                        m.d.sync += self.next_screen.eq(command.command[0])
+                    with m.Case(CMD_BLANK, CMD_SHOW):
+                        m.d.sync += self.enable_display.eq(command.command[0])
+                    with m.Case(CMD_ORIGIN):
+                        m.d.sync += writing_column.eq(0)
+                        m.d.sync += writing_row.eq(0)
+                        m.d.sync += writing_super_row.eq(0)
+                    with m.Case(CMD_MOVE_RIGHT):
+                        m.d.sync += writing_column.eq(writing_column + 1)
+                    with m.Case(CMD_MOVE_LEFT):
+                        m.d.sync += writing_column.eq(writing_column - 1)
+                    with m.Case(CMD_MOVE_DOWN):
+                        m.d.sync += writing_row.eq(writing_row + 1)
+                        with m.If((~writing_row) == 0):
+                            m.d.sync += writing_super_row.eq(writing_super_row + 1)
+                    with m.Case(CMD_MOVE_UP):
+                        m.d.sync += writing_row.eq(writing_row - 1)
+                        with m.If(writing_row == 0):
+                            m.d.sync += writing_super_row.eq(writing_super_row - 1)
+                    with m.Case(CMD_POS_STORE):
+                        m.d.sync += stored_column.eq(writing_column)
+                        m.d.sync += stored_row.eq(writing_row)
+                        m.d.sync += stored_super_row.eq(writing_super_row)
+                    with m.Case(CMD_POS_RCL_X):
+                        m.d.sync += writing_column.eq(stored_column)
+                    with m.Case(CMD_POS_RCL_Y):
+                        m.d.sync += writing_row.eq(stored_row)
+                        m.d.sync += writing_super_row.eq(stored_super_row)
+                        
         return m
             
 
@@ -249,6 +289,7 @@ class LEDPanelComponent(wiring.Component):
         col = Signal(range(self.columns))
         MAX_PWM = 14
         pwm = Signal(range(MAX_PWM + 1))
+        enable_display = Signal(init=1)
 
         with m.FSM(init="NEWROW"):
             with m.State("NEWROW"):
@@ -292,7 +333,7 @@ class LEDPanelComponent(wiring.Component):
                 with m.Else():
                     m.next = "SENDDATA"
             with m.State("ENDROW"):
-                m.d.sync += oe.eq(0)
+                m.d.sync += oe.eq(~enable_display)
                 m.d.sync += led_strobe.eq(1)
                 m.d.sync += pwm.eq(pwm+1)
                 with m.If(pwm == MAX_PWM):
