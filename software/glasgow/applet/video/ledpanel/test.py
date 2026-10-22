@@ -1,5 +1,5 @@
 from glasgow.applet import GlasgowAppletV2TestCase, synthesis_test, applet_v2_hardware_test
-from . import DisplayLEDPanelApplet, LEDPanelController, LEDPanelDimensions, pixel_shape
+from . import *
 from amaranth import *
 from amaranth.sim import Simulator
 from amaranth.lib import wiring, stream
@@ -31,7 +31,8 @@ class DisplayLEDPanelAppletTestCase(GlasgowAppletV2TestCase, applet=DisplayLEDPa
 
     bytes_remaining = [0xfb, 0xf1, 0xf3, 0x21, 0x42, 0x93, 0x37, 0xfe, 0xfe,
                        0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9,
-                       0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff, 0x05, 0x48, 0x91]
+                       0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff, 0x05, 0x48, 0x91,
+                       CMD_MOVE_DOWN, CMD_MOVE_LEFT,0x92,  CMD_POS_STORE, 0x93,CMD_POS_RCL_X, 0x94]
 
     async def send_input(self, ctx):
         while self.bytes_remaining:

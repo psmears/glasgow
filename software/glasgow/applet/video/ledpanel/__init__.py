@@ -11,20 +11,34 @@ from amaranth.lib.wiring import In, Out
 from glasgow.support import logging
 from glasgow.applet import GlasgowAppletV2
 
+__all__ = [
+    "CMD_BLANK",
+    "CMD_SHOW",
+    "CMD_SET_SCREEN",
+    "CMD_SET_WRITE",
+    "CMD_ORIGIN",
+    "CMD_MOVE_UP",
+    "CMD_MOVE_DOWN",
+    "CMD_MOVE_LEFT",
+    "CMD_MOVE_RIGHT",
+    "CMD_POS_STORE",
+    "CMD_POS_RCL_X",
+    "CMD_POS_RCL_Y",
+    "DisplayLEDPanelApplet", "LEDPanelController", "LEDPanelDimensions", "pixel_shape"]
 
 # FPGA commands
-CMD_BLANK      = 0b0000
-CMD_SHOW       = 0b0001
-CMD_SET_SCREEN = 0b0010
-CMD_SET_WRITE  = 0b0100
-CMD_ORIGIN     = 0b0110
-CMD_MOVE_UP    = 0b1000
-CMD_MOVE_DOWN  = 0b1001
-CMD_MOVE_LEFT  = 0b1010
-CMD_MOVE_RIGHT = 0b1011
-CMD_POS_STORE  = 0b1100
-CMD_POS_RCL_X  = 0b1101
-CMD_POS_RCL_Y  = 0b1101
+CMD_BLANK      = 0b0000 # Blank the screen (all LEDs off)
+CMD_SHOW       = 0b0001 # Show the screen
+CMD_SET_SCREEN = 0b0010 # Select which buffer to display
+CMD_SET_WRITE  = 0b0100 # Select which buffer to write to
+CMD_ORIGIN     = 0b0110 # Move to (0, 0)
+CMD_MOVE_UP    = 0b1000 # Move up a pixel
+CMD_MOVE_DOWN  = 0b1001 # Move down a pixel
+CMD_MOVE_LEFT  = 0b1010 # Move left a pixel
+CMD_MOVE_RIGHT = 0b1011 # Move right a pixel
+CMD_POS_STORE  = 0b1100 # Remember the current position
+CMD_POS_RCL_X  = 0b1101 # Set the current X position to the remembered one
+CMD_POS_RCL_Y  = 0b1101 # Set the current Y position to the remembered one
 
 
 
@@ -223,10 +237,12 @@ class LEDPanelController(wiring.Component):
                         with m.If(writing_row == 0):
                             m.d.sync += writing_super_row.eq(writing_super_row - 1)
                     with m.Case(CMD_POS_STORE):
+                        m.d.sync += Print("Storing column ", writing_column)
                         m.d.sync += stored_column.eq(writing_column)
                         m.d.sync += stored_row.eq(writing_row)
                         m.d.sync += stored_super_row.eq(writing_super_row)
                     with m.Case(CMD_POS_RCL_X):
+                        m.d.sync += Print("Resetting column to ",stored_column)
                         m.d.sync += writing_column.eq(stored_column)
                     with m.Case(CMD_POS_RCL_Y):
                         m.d.sync += writing_row.eq(stored_row)
