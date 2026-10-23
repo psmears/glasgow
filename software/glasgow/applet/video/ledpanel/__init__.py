@@ -81,17 +81,23 @@ class LEDPanelDimensions:
     super_rows: int
     columns: int
 
-    @property
-    def addr_shape(self):
-        return data.StructLayout({
-            "column": Shape.cast(range(self.columns)),
-            "row": Shape.cast(range(self.rows)),
-            "screen": Shape.cast(range(MAX_SCREENS)),
+    def __post_init__(self):
+        self.screen_shape = Shape.cast(range(MAX_SCREENS))
+        self.row_shape = Shape.cast(range(self.rows))
+        self.super_row_shape = Shape.cast(range(self.super_rows))
+        self.column_shape = Shape.cast(range(self.columns))
+        self.pixel_pos = data.StructLayout({
+            "screen": self.screen_shape,
+            "super_row": self.super_row_shape,
+            "row": self.row_shape,
+            "column": self.column_shape,
         })
-
-    @property
-    def memory_shape(self):
-        return data.ArrayLayout(pixel_shape, self.super_rows)
+        self.addr_shape = data.StructLayout({
+            "column": self.column_shape,
+            "row": self.row_shape,
+            "screen": self.screen_shape,
+        })
+        self.memory_shape = data.ArrayLayout(pixel_shape, self.super_rows)
 
     def get_memory(self):
         return memory.Memory(
@@ -124,6 +130,7 @@ class LEDPanelInterface:
             rgb1=rgb1,
             rgb2=rgb2,
         )
+        dimensions = LEDPanelDimensions(rows, columns, 2)
         component = assembly.add_submodule(
             LEDPanelComponent(
                 ports=ports,
@@ -152,29 +159,18 @@ class LEDPanelController(wiring.Component):
         # Don't write to the memory by default
         m.d.sync += self.wr_port.en.eq(0)
 
-        screen_shape = Shape.cast(range(MAX_SCREENS))
-        row_shape = Shape.cast(range(self.dimensions.rows))
-        super_row_shape = Shape.cast(range(self.dimensions.super_rows))
-        column_shape = Shape.cast(range(self.dimensions.columns))
-        pixel_pos = data.StructLayout({
-            "screen": screen_shape,
-            "super_row": super_row_shape,
-            "row": row_shape,
-            "column": column_shape,
-        })
-
-        writing_screen = Signal(screen_shape, init=0)
-        writing_row = Signal(row_shape, init=0)
-        writing_super_row = Signal(super_row_shape, init=0)
-        writing_column = Signal(column_shape, init=0)
+        writing_screen = Signal(self.dimensions.screen_shape, init=0)
+        writing_row = Signal(self.dimensions.row_shape, init=0)
+        writing_super_row = Signal(self.dimensions.super_row_shape, init=0)
+        writing_column = Signal(self.dimensions.column_shape, init=0)
         current_pixel = Signal(pixel_shape, init={
             "r": 0,
             "g": 0,
             "b": 0
         })
-        stored_row = Signal(row_shape, init=0)
-        stored_super_row = Signal(super_row_shape, init=0)
-        stored_column = Signal(column_shape, init=0)
+        stored_row = Signal(self.dimensions.row_shape, init=0)
+        stored_super_row = Signal(self.dimensions.super_row_shape, init=0)
+        stored_column = Signal(self.dimensions.column_shape, init=0)
 
         m.d.comb += self.i_stream.ready.eq(1)
         command = Signal(command_shape)
