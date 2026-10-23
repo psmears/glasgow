@@ -134,8 +134,7 @@ class LEDPanelInterface:
         component = assembly.add_submodule(
             LEDPanelComponent(
                 ports=ports,
-                rows=rows,
-                columns=columns,
+                dimensions=dimensions,
                 sys_clk_period=assembly.sys_clk_period
             )
         )
@@ -253,10 +252,9 @@ class LEDPanelComponent(wiring.Component):
     i_stream: In(stream.Signature(8))
     o_stream: Out(stream.Signature(8))
 
-    def __init__(self, ports, rows, columns, sys_clk_period):
+    def __init__(self, ports, dimensions, sys_clk_period):
         self._ports = ports
-        self.rows = rows
-        self.columns = columns
+        self.dimensions = dimensions
         self.sys_clk_period = sys_clk_period
 
 
@@ -297,8 +295,8 @@ class LEDPanelComponent(wiring.Component):
 
         
 
-        row = Signal(range(self.rows))
-        col = Signal(range(self.columns))
+        row = Signal(self.dimensions.row_shape)
+        col = Signal(self.dimensions.column_shape)
         MAX_PWM = 14
         pwm = Signal(range(MAX_PWM + 1))
         enable_display = Signal(init=1)
@@ -340,7 +338,7 @@ class LEDPanelComponent(wiring.Component):
             with m.State("DATACLOCK"):
                 m.d.sync += led_clk.eq(0)
                 m.d.sync += col.eq(col+1)
-                with m.If(col == (self.columns - 1)):
+                with m.If(col == (self.dimensions.columns - 1)):
                     m.next = "ENDROW"
                 with m.Else():
                     m.next = "SENDDATA"
