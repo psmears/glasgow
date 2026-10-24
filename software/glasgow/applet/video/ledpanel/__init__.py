@@ -106,7 +106,7 @@ class LEDPanelDimensions:
             init=[])
 
 
-class LEDMemorySignature(wiring.Signature):
+class LEDWrPortSignature(wiring.Signature):
     def __init__(self, dimensions: LEDPanelDimensions):
         wr_port_sig = memory.WritePort.Signature(
             addr_width = dimensions.addr_shape.size,
@@ -114,6 +114,14 @@ class LEDMemorySignature(wiring.Signature):
             granularity = 1,
         )
         super().__init__(wr_port_sig.members)
+
+class LEDRdPortSignature(wiring.Signature):
+    def __init__(self, dimensions: LEDPanelDimensions):
+        rd_port_sig = memory.ReadPort.Signature(
+            addr_width = dimensions.addr_shape.size,
+            shape = dimensions.memory_shape,
+        )
+        super().__init__(rd_port_sig.members)
 
 
 
@@ -147,7 +155,7 @@ class LEDPanelController(wiring.Component):
 
         super().__init__({
             "i_stream": In(stream.Signature(8)),
-            "wr_port": In(LEDMemorySignature(self.dimensions)),
+            "wr_port": In(LEDWrPortSignature(self.dimensions)),
             "next_screen": Out(unsigned(1)),
             "enable_display": Out(unsigned(1)),
         })
@@ -249,8 +257,6 @@ class LEDPanelController(wiring.Component):
                  
 
 class LEDPanelComponent(wiring.Component):
-    i_stream: In(stream.Signature(8))
-    o_stream: Out(stream.Signature(8))
 
     def __init__(self, ports, dimensions, sys_clk_period):
         self._ports = ports
@@ -258,7 +264,11 @@ class LEDPanelComponent(wiring.Component):
         self.sys_clk_period = sys_clk_period
 
 
-        super().__init__()
+        super().__init__({
+            "i_stream": In(stream.Signature(8)),
+            "o_stream": Out(stream.Signature(8)),
+            "rd_port": In(LEDRdPortSignature(self.dimensions)),
+        })
 
     def elaborate(self, platform):
         m = Module()
@@ -297,12 +307,35 @@ class LEDPanelComponent(wiring.Component):
 
         row = Signal(self.dimensions.row_shape)
         col = Signal(self.dimensions.column_shape)
-        MAX_PWM = 14
-        pwm = Signal(range(MAX_PWM + 1))
+
+        # For PWM purposes we count from 0 to the maximum pixel value
+        # minus one. This is because we will light up a pixel if its
+        # value is strictly greater than the PWM count, and we want
+        # pixels with the maximum possible value to be on constantly.
+        MAX_PWM = (1 << BPP) - 2
+        current_pwm = Signal(range(MAX_PWM + 1))
+
+        # Pixels of brightness level 1 are on for 1 unit of time;
+        # brightness level 2 gets an additional 3, level 3 gets an
+        # additional 5 on top of that, and then each successive level
+        # gets (in addition to what all the lower levels got) an
+        # additional amount of the next odd number.
+        #
+        # This means that a pixel with value n gets an on-time of
+        # n^2. This gives a rough approximation to gamma correction,
+        # meaning that the brightness levels appear roughly even.
+        level_max = Signal(range(1 << (2 * BPP)))
+        level_counter = Signal(range(1 << (2 * BPP)))
+
         enable_display = Signal(init=1)
 
         with m.FSM(init="NEWROW"):
             with m.State("NEWROW"):
+                # Set up PWM counters
+                m.d.sync += current_pwm.eq(0)
+                m.d.sync += level_counter.eq(0)
+                m.d.sync += level_max.eq(1)
+                
                 # Blank output before updating addresses, to help avoid ghosting
                 # ("OE" pin is active low)
                 m.d.sync += oe.eq(1)
@@ -321,7 +354,7 @@ class LEDPanelComponent(wiring.Component):
                 r2 = Signal()
                 g2 = Signal()
                 b2 = Signal()
-                m.d.comb += flash.eq(pwm & 1)
+                m.d.comb += flash.eq(current_pwm & 1)
                 
                 m.d.comb += r1.eq(row >= 7)
                 m.d.comb += g1.eq(((row >= 7) & flash) | (row >= 13))
@@ -333,11 +366,21 @@ class LEDPanelComponent(wiring.Component):
                 
                 m.d.sync += rgb1.eq(Cat(r1,g1,b1))
                 m.d.sync += rgb2.eq(Cat(r2,g2,b2))
+                # with m.If(col == 5):
+                #     m.d.comb += r1.eq(1)
+                #     m.d.comb += g1.eq(0)
+                #     m.d.comb += b1.eq(0)
                 m.d.sync += led_clk.eq(1)
+                m.next = "DATACLOCK0"
+            with m.State("DATACLOCK0"):
                 m.next = "DATACLOCK"
             with m.State("DATACLOCK"):
                 m.d.sync += led_clk.eq(0)
                 m.d.sync += col.eq(col+1)
+                # with m.If(col == 5):
+                #     m.d.comb += r1.eq(0)
+                #     m.d.comb += g1.eq(1)
+                #     m.d.comb += b1.eq(1)
                 with m.If(col == (self.dimensions.columns - 1)):
                     m.next = "ENDROW"
                 with m.Else():
@@ -345,9 +388,9 @@ class LEDPanelComponent(wiring.Component):
             with m.State("ENDROW"):
                 m.d.sync += oe.eq(~enable_display)
                 m.d.sync += led_strobe.eq(1)
-                m.d.sync += pwm.eq(pwm+1)
-                with m.If(pwm == MAX_PWM):
-                    m.d.sync += pwm.eq(0)
+                m.d.sync += current_pwm.eq(current_pwm+1)
+                with m.If(current_pwm == MAX_PWM):
+                    m.d.sync += current_pwm.eq(0)
                     m.d.sync += row.eq(row+1)
                     m.next = "NEWROW"
                 with m.Else():
