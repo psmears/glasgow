@@ -138,7 +138,7 @@ class LEDPanelInterface:
             rgb1=rgb1,
             rgb2=rgb2,
         )
-        dimensions = LEDPanelDimensions(rows, columns, 2)
+        dimensions = LEDPanelDimensions(rows, 2, columns)
         component = assembly.add_submodule(
             LEDPanelComponent(
                 ports=ports,
@@ -347,6 +347,7 @@ class LEDPanelComponent(wiring.Component):
                 m.next = "SENDDATA"
             with m.State("SENDDATA"):
                 # Assume data is accepted on falling edge of led_clk
+                m.d.sync += led_strobe.eq(0)
                 flash = Signal()
                 r1 = Signal()
                 g1 = Signal()
@@ -364,24 +365,20 @@ class LEDPanelComponent(wiring.Component):
                 m.d.comb += g2.eq((row <= 2) | ((row <= 8)&flash))
                 m.d.comb += b2.eq((row <= 2) | (row > 8) | flash)
                 
+
                 m.d.sync += rgb1.eq(Cat(r1,g1,b1))
                 m.d.sync += rgb2.eq(Cat(r2,g2,b2))
-                # with m.If(col == 5):
-                #     m.d.comb += r1.eq(1)
-                #     m.d.comb += g1.eq(0)
-                #     m.d.comb += b1.eq(0)
                 m.d.sync += led_clk.eq(1)
-                m.next = "DATACLOCK0"
-            with m.State("DATACLOCK0"):
+                with m.If(col == 5):
+                    m.d.sync += rgb1.eq(1)
                 m.next = "DATACLOCK"
             with m.State("DATACLOCK"):
+                with m.If(col == 5):
+                    m.d.sync += rgb1.eq(2)
                 m.d.sync += led_clk.eq(0)
                 m.d.sync += col.eq(col+1)
-                # with m.If(col == 5):
-                #     m.d.comb += r1.eq(0)
-                #     m.d.comb += g1.eq(1)
-                #     m.d.comb += b1.eq(1)
                 with m.If(col == (self.dimensions.columns - 1)):
+                    m.d.sync += col.eq(0)
                     m.next = "ENDROW"
                 with m.Else():
                     m.next = "SENDDATA"
