@@ -31,9 +31,9 @@ class Cmd(enum.IntEnum):
     POS_STORE  = 0b1100 # Remember the current position
     POS_RCL_X  = 0b1101 # Set the current X position to the remembered one
     POS_RCL_Y  = 0b1101 # Set the current Y position to the remembered one
-    SET_RED    = 0b1000_0000 # Set red component of current colour
+    SET_RED    = 0b0010_0000 # Set red component of current colour
     SET_GREEN  = 0b0100_0000 # Set green component of current colour
-    SET_BLUE   = 0b0010_0000 # Set blue component of current colour
+    SET_BLUE   = 0b1000_0000 # Set blue component of current colour
     WRITE      = 0b0001_0000 # Set current position to current colour & move on
 
 
@@ -417,8 +417,7 @@ class LEDPanelDriver(wiring.Component):
 
                 for i in range(self.dimensions.super_rows):
                     m.d.sync += self.panel.rgb[i].eq(Cat(
-                        #1 | (self.rd_port.data[i].r > current_pwm),
-                        col > current_pwm,
+                        self.rd_port.data[i].r > current_pwm,
                         self.rd_port.data[i].g > current_pwm,
                         self.rd_port.data[i].b > current_pwm
                     ))
