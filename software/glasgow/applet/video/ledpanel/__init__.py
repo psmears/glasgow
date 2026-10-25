@@ -6,7 +6,7 @@ import dataclasses
 
 from amaranth import *
 from amaranth.lib import io, cdc, wiring, stream, data, memory
-from amaranth.lib.wiring import In, Out
+from amaranth.lib.wiring import In, Out, flipped
 
 from glasgow.support import logging
 from glasgow.applet import GlasgowAppletV2
@@ -98,6 +98,12 @@ class LEDPanelDimensions:
             "screen": self.screen_shape,
         })
         self.memory_shape = data.ArrayLayout(pixel_shape, self.super_rows)
+        self.rgb_shape = data.StructLayout({
+            "r": unsigned(1),
+            "g": unsigned(1),
+            "b": unsigned(1),
+        })
+        self.rgb_pins = data.ArrayLayout(self.rgb_shape, self.super_rows)
 
     def get_memory(self):
         return memory.Memory(
@@ -122,6 +128,22 @@ class LEDRdPortSignature(wiring.Signature):
             shape = dimensions.memory_shape,
         )
         super().__init__(rd_port_sig.members)
+
+class LEDPanelSignature(wiring.Signature):
+    def __init__(self, dimensions: LEDPanelDimensions):
+        super().__init__({
+            "led_clk": Out(1),
+            "led_strobe": Out(1),
+            "addr": Out(dimensions.row_shape),
+            "oe": Out(1),
+            "rgb": Out(dimensions.rgb_pins),
+        })
+
+class ScreenShapeSignature(wiring.Signature):
+    def __init__(self, dimensions: LEDPanelDimensions):
+        super().__init__({
+            "screen": Out(1),
+        })
 
 
 
@@ -156,7 +178,7 @@ class LEDPanelController(wiring.Component):
         super().__init__({
             "i_stream": In(stream.Signature(8)),
             "wr_port": In(LEDWrPortSignature(self.dimensions)),
-            "next_screen": Out(self.dimensions.screen_shape),
+            "next_screen": Out(ScreenShapeSignature(self.dimensions)),
             "enable_display": Out(unsigned(1)),
         })
 
@@ -220,7 +242,7 @@ class LEDPanelController(wiring.Component):
                     with m.Case(CMD_SET_WRITE, CMD_SET_WRITE | 1):
                         m.d.sync += writing_screen.eq(command.command[0])
                     with m.Case(CMD_SET_SCREEN, CMD_SET_SCREEN | 1):
-                        m.d.sync += self.next_screen.eq(command.command[0])
+                        m.d.sync += self.next_screen.screen.eq(command.command[0])
                     with m.Case(CMD_BLANK, CMD_SHOW):
                         m.d.sync += self.enable_display.eq(command.command[0])
                     with m.Case(CMD_ORIGIN):
@@ -252,36 +274,43 @@ class LEDPanelController(wiring.Component):
                         m.d.sync += writing_super_row.eq(stored_super_row)
                         
         return m
+
+
             
 
-                 
-
 class LEDPanelComponent(wiring.Component):
+    """
+    Top-level component for displaying on an LED panel
+    """
+    o_stream: Out(stream.Signature(8))
+    i_stream: In(stream.Signature(8))
 
     def __init__(self, ports, dimensions, sys_clk_period):
         self._ports = ports
         self.dimensions = dimensions
         self.sys_clk_period = sys_clk_period
 
-
-        super().__init__({
-            "i_stream": In(stream.Signature(8)),
-            "o_stream": Out(stream.Signature(8)),
-            "rd_port": In(LEDRdPortSignature(self.dimensions)),
-            "vsync": Out(unsigned(1)),
-            "next_screen": In(self.dimensions.screen_shape),
-        })
+        super().__init__()
 
     def elaborate(self, platform):
         m = Module()
 
-        led_clk = Signal(1)
-        led_strobe = Signal(1)
-        oe = Signal(1)
-        rgb1 = Signal(3)
-        rgb2 = Signal(3)
-        addr = Signal(4)
+        m.submodules.controller = controller = LEDPanelController(self.dimensions)
+        m.submodules.driver = driver = LEDPanelDriver(self.dimensions)
 
+        m.submodules.mem = self.mem = mem = self.dimensions.get_memory()
+
+        # Connect up the memory
+        wiring.connect(m, controller.wr_port, mem.write_port(granularity=1))
+        wiring.connect(m, driver.rd_port, mem.read_port())
+
+        # Connect the control stream
+        wiring.connect(m, flipped(self.i_stream), controller.i_stream)
+
+        # Connect the "next screen to show" signal
+        wiring.connect(m, controller.next_screen, driver.next_screen)
+
+        # Connect up the panel itself
         m.submodules.led_clk_buffer = led_clk_buffer = io.Buffer("o", self._ports.led_clk)
         m.submodules.led_strobe_buffer = led_strobe_buffer = io.Buffer("o", self._ports.led_strobe)
         m.submodules.oe_buffer = oe_buffer = io.Buffer("o", self._ports.oe)
@@ -297,15 +326,34 @@ class LEDPanelComponent(wiring.Component):
         m.d.comb += rgb2_buffer.oe.eq(1)
         m.d.comb += addr_buffer.oe.eq(1)
 
-        m.d.comb += led_clk_buffer.o.eq(led_clk)
-        m.d.comb += led_strobe_buffer.o.eq(led_strobe)
-        m.d.comb += oe_buffer.o.eq(oe)
-        m.d.comb += rgb1_buffer.o.eq(rgb1)
-        m.d.comb += rgb2_buffer.o.eq(rgb2)
-        m.d.comb += addr_buffer.o.eq(addr)
+        m.d.comb += led_clk_buffer.o.eq(driver.panel.led_clk)
+        m.d.comb += led_strobe_buffer.o.eq(driver.panel.led_strobe)
+        m.d.comb += oe_buffer.o.eq(driver.panel.oe)
+        m.d.comb += rgb1_buffer.o.eq(driver.panel.rgb[0])
+        m.d.comb += rgb2_buffer.o.eq(driver.panel.rgb[1])
+        m.d.comb += addr_buffer.o.eq(driver.panel.addr)
         
+        return m
+    
+                 
 
-        
+class LEDPanelDriver(wiring.Component):
+
+    def __init__(self, dimensions):
+        self.dimensions = dimensions
+
+
+        super().__init__({
+            "panel": Out(LEDPanelSignature(self.dimensions)),
+            "i_stream": In(stream.Signature(8)),
+            "o_stream": Out(stream.Signature(8)),
+            "rd_port": In(LEDRdPortSignature(self.dimensions)),
+            "vsync": Out(unsigned(1)),
+            "next_screen": In(ScreenShapeSignature(self.dimensions)),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
 
         row = Signal(self.dimensions.row_shape)
         col = Signal(self.dimensions.column_shape)
@@ -337,7 +385,7 @@ class LEDPanelComponent(wiring.Component):
 
         with m.FSM(init="NEWROW"):
             with m.State("NEWSCREEN"):
-                m.d.sync += screen.eq(self.next_screen)
+                m.d.sync += screen.eq(self.next_screen.screen)
                 m.d.sync += self.vsync.eq(1)
                 m.next = "NEWROW"
             with m.State("NEWROW"):
@@ -349,28 +397,28 @@ class LEDPanelComponent(wiring.Component):
                 
                 # Blank output before updating addresses, to help avoid ghosting
                 # ("OE" pin is active low)
-                m.d.sync += oe.eq(1)
-                m.d.sync += led_strobe.eq(0)
+                m.d.sync += self.panel.oe.eq(1)
+                m.d.sync += self.panel.led_strobe.eq(0)
                 m.next = "SETADDR"
             with m.State("SETADDR"):
-                m.d.sync += addr.eq(row)
+                m.d.sync += self.panel.addr.eq(row)
                 m.d.sync += col.eq(0)
                 m.next = "SENDDATA"
             with m.State("SENDDATA"):
                 # Data is accepted on rising edge of led_clk
-                m.d.sync += led_strobe.eq(0)
+                m.d.sync += self.panel.led_strobe.eq(0)
 
                 for i in range(self.dimensions.super_rows):
-                    m.d.sync += [rgb1, rgb2][i].eq(Cat(
+                    m.d.sync += self.panel.rgb[i].eq(Cat(
                         self.rd_port.data[i].r > current_pwm,
                         self.rd_port.data[i].g > current_pwm,
                         self.rd_port.data[i].b > current_pwm
                     ))
 
-                m.d.sync += led_clk.eq(0)
+                m.d.sync += self.panel.led_clk.eq(0)
                 m.next = "DATACLOCK"
             with m.State("DATACLOCK"):
-                m.d.sync += led_clk.eq(1)
+                m.d.sync += self.panel.led_clk.eq(1)
                 m.d.sync += col.eq(col+1)
                 with m.If(col == (self.dimensions.columns - 1)):
                     m.d.sync += col.eq(0)
@@ -378,8 +426,8 @@ class LEDPanelComponent(wiring.Component):
                 with m.Else():
                     m.next = "SENDDATA"
             with m.State("ENDROW"):
-                m.d.sync += oe.eq(~enable_display)
-                m.d.sync += led_strobe.eq(1)
+                m.d.sync += self.panel.oe.eq(~enable_display)
+                m.d.sync += self.panel.led_strobe.eq(1)
 
                 # Deal with pwm levels
                 m.d.sync += level_counter.eq(level_counter+1)
@@ -402,12 +450,6 @@ class LEDPanelComponent(wiring.Component):
                     m.next = "SENDDATA"
         
 
-        # second_count = int(1.0/self.sys_clk_period)
-        # counter=Signal(range(second_count+1))
-        # m.d.sync += led_clk.eq(counter < (second_count//2))
-        # m.d.sync += counter.eq(Mux(counter < second_count, counter+1, 0))
-
-                    
         return m
 
 
