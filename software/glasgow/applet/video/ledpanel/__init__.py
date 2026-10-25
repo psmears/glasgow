@@ -468,10 +468,10 @@ class LEDPanelDriver(wiring.Component):
                         self.rd_port.data[i].b > current_pwm
                     ))
 
-                m.d.sync += self.panel.led_clk.eq(0)
+                m.d.sync += self.panel.led_clk.eq(1)
                 m.next = "DATACLOCK"
             with m.State("DATACLOCK"):
-                m.d.sync += self.panel.led_clk.eq(1)
+                m.d.sync += self.panel.led_clk.eq(0)
                 m.d.sync += col.eq(col+1)
                 with m.If(col == (self.dimensions.columns - 1)):
                     m.d.sync += col.eq(0)
