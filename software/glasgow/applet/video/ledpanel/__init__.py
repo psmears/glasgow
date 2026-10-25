@@ -145,8 +145,13 @@ class ScreenShapeSignature(wiring.Signature):
             "screen": Out(1),
         })
 
+@dataclasses.dataclass
+class Pixel:
+    r: int
+    g: int
+    b: int
 
-
+    
 class LEDPanelInterface:
     def __init__(self, logger: logging.Logger, assembly: AbstractAssembly, *,
                  led_clk: GlasgowPin, led_strobe: GlasgowPin, oe: GlasgowPin, rgb1: GlasgowPin, rgb2: GlasgowPin, addr: GlasgowPin, rows: int, columns: int):
@@ -169,6 +174,14 @@ class LEDPanelInterface:
             )
         )
         self._pipe = assembly.add_inout_pipe(component.o_stream, component.i_stream)
+
+    async def set_pixel(self, pixel: Pixel):
+        await self._pipe.send([
+            0b1000_0000 | (pixel.r >> 4),
+            0b0100_0000 | (pixel.g >> 4),
+            0b0011_0000 | (pixel.b >> 4),
+        ])
+        
         
 class LEDPanelController(wiring.Component):
 
@@ -275,8 +288,6 @@ class LEDPanelController(wiring.Component):
                         
         return m
 
-
-            
 
 class LEDPanelComponent(wiring.Component):
     """
