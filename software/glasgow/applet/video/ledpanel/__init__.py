@@ -3,6 +3,7 @@
 
 import asyncio
 import dataclasses
+import enum
 
 from amaranth import *
 from amaranth.lib import io, cdc, wiring, stream, data, memory
@@ -12,33 +13,23 @@ from glasgow.support import logging
 from glasgow.applet import GlasgowAppletV2
 
 __all__ = [
-    "CMD_BLANK",
-    "CMD_SHOW",
-    "CMD_SET_SCREEN",
-    "CMD_SET_WRITE",
-    "CMD_ORIGIN",
-    "CMD_MOVE_UP",
-    "CMD_MOVE_DOWN",
-    "CMD_MOVE_LEFT",
-    "CMD_MOVE_RIGHT",
-    "CMD_POS_STORE",
-    "CMD_POS_RCL_X",
-    "CMD_POS_RCL_Y",
+    "Cmd",
     "DisplayLEDPanelApplet", "LEDPanelController", "LEDPanelDimensions", "pixel_shape"]
 
 # FPGA commands
-CMD_BLANK      = 0b0000 # Blank the screen (all LEDs off)
-CMD_SHOW       = 0b0001 # Show the screen
-CMD_SET_SCREEN = 0b0010 # Select which buffer to display
-CMD_SET_WRITE  = 0b0100 # Select which buffer to write to
-CMD_ORIGIN     = 0b0110 # Move to (0, 0)
-CMD_MOVE_UP    = 0b1000 # Move up a pixel
-CMD_MOVE_DOWN  = 0b1001 # Move down a pixel
-CMD_MOVE_LEFT  = 0b1010 # Move left a pixel
-CMD_MOVE_RIGHT = 0b1011 # Move right a pixel
-CMD_POS_STORE  = 0b1100 # Remember the current position
-CMD_POS_RCL_X  = 0b1101 # Set the current X position to the remembered one
-CMD_POS_RCL_Y  = 0b1101 # Set the current Y position to the remembered one
+class Cmd(enum.IntEnum):
+    BLANK      = 0b0000 # Blank the screen (all LEDs off)
+    SHOW       = 0b0001 # Show the screen
+    SET_SCREEN = 0b0010 # Select which buffer to display
+    SET_WRITE  = 0b0100 # Select which buffer to write to
+    ORIGIN     = 0b0110 # Move to (0, 0)
+    MOVE_UP    = 0b1000 # Move up a pixel
+    MOVE_DOWN  = 0b1001 # Move down a pixel
+    MOVE_LEFT  = 0b1010 # Move left a pixel
+    MOVE_RIGHT = 0b1011 # Move right a pixel
+    POS_STORE  = 0b1100 # Remember the current position
+    POS_RCL_X  = 0b1101 # Set the current X position to the remembered one
+    POS_RCL_Y  = 0b1101 # Set the current Y position to the remembered one
 
 
 
@@ -252,37 +243,37 @@ class LEDPanelController(wiring.Component):
 
             with m.Else():
                 with m.Switch(command.command):
-                    with m.Case(CMD_SET_WRITE, CMD_SET_WRITE | 1):
+                    with m.Case(Cmd.SET_WRITE, Cmd.SET_WRITE | 1):
                         m.d.sync += writing_screen.eq(command.command[0])
-                    with m.Case(CMD_SET_SCREEN, CMD_SET_SCREEN | 1):
+                    with m.Case(Cmd.SET_SCREEN, Cmd.SET_SCREEN | 1):
                         m.d.sync += self.next_screen.screen.eq(command.command[0])
-                    with m.Case(CMD_BLANK, CMD_SHOW):
+                    with m.Case(Cmd.BLANK, Cmd.SHOW):
                         m.d.sync += self.enable_display.eq(command.command[0])
-                    with m.Case(CMD_ORIGIN):
+                    with m.Case(Cmd.ORIGIN):
                         m.d.sync += writing_column.eq(0)
                         m.d.sync += writing_row.eq(0)
                         m.d.sync += writing_super_row.eq(0)
-                    with m.Case(CMD_MOVE_RIGHT):
+                    with m.Case(Cmd.MOVE_RIGHT):
                         m.d.sync += writing_column.eq(writing_column + 1)
-                    with m.Case(CMD_MOVE_LEFT):
+                    with m.Case(Cmd.MOVE_LEFT):
                         m.d.sync += writing_column.eq(writing_column - 1)
-                    with m.Case(CMD_MOVE_DOWN):
+                    with m.Case(Cmd.MOVE_DOWN):
                         m.d.sync += writing_row.eq(writing_row + 1)
                         with m.If((~writing_row) == 0):
                             m.d.sync += writing_super_row.eq(writing_super_row + 1)
-                    with m.Case(CMD_MOVE_UP):
+                    with m.Case(Cmd.MOVE_UP):
                         m.d.sync += writing_row.eq(writing_row - 1)
                         with m.If(writing_row == 0):
                             m.d.sync += writing_super_row.eq(writing_super_row - 1)
-                    with m.Case(CMD_POS_STORE):
+                    with m.Case(Cmd.POS_STORE):
                         m.d.sync += Print("Storing column ", writing_column)
                         m.d.sync += stored_column.eq(writing_column)
                         m.d.sync += stored_row.eq(writing_row)
                         m.d.sync += stored_super_row.eq(writing_super_row)
-                    with m.Case(CMD_POS_RCL_X):
+                    with m.Case(Cmd.POS_RCL_X):
                         m.d.sync += Print("Resetting column to ",stored_column)
                         m.d.sync += writing_column.eq(stored_column)
-                    with m.Case(CMD_POS_RCL_Y):
+                    with m.Case(Cmd.POS_RCL_Y):
                         m.d.sync += writing_row.eq(stored_row)
                         m.d.sync += writing_super_row.eq(stored_super_row)
                         
