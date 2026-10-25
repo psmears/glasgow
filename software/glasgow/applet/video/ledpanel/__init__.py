@@ -156,7 +156,7 @@ class LEDPanelController(wiring.Component):
         super().__init__({
             "i_stream": In(stream.Signature(8)),
             "wr_port": In(LEDWrPortSignature(self.dimensions)),
-            "next_screen": Out(unsigned(1)),
+            "next_screen": Out(self.dimensions.screen_shape),
             "enable_display": Out(unsigned(1)),
         })
 
@@ -268,6 +268,8 @@ class LEDPanelComponent(wiring.Component):
             "i_stream": In(stream.Signature(8)),
             "o_stream": Out(stream.Signature(8)),
             "rd_port": In(LEDRdPortSignature(self.dimensions)),
+            "vsync": Out(unsigned(1)),
+            "next_screen": In(self.dimensions.screen_shape),
         })
 
     def elaborate(self, platform):
@@ -307,6 +309,7 @@ class LEDPanelComponent(wiring.Component):
 
         row = Signal(self.dimensions.row_shape)
         col = Signal(self.dimensions.column_shape)
+        screen = Signal(self.dimensions.screen_shape, init=0)
 
         # For PWM purposes we count from 0 to the maximum pixel value
         # minus one. This is because we will light up a pixel if its
@@ -329,12 +332,20 @@ class LEDPanelComponent(wiring.Component):
 
         enable_display = Signal(init=1)
 
+        m.d.comb += self.rd_port.addr.eq(Cat(col, row, screen))
+        m.d.comb += self.rd_port.en.eq(1)
+
         with m.FSM(init="NEWROW"):
+            with m.State("NEWSCREEN"):
+                m.d.sync += screen.eq(self.next_screen)
+                m.d.sync += self.vsync.eq(1)
+                m.next = "NEWROW"
             with m.State("NEWROW"):
+                m.d.sync += self.vsync.eq(0)
                 # Set up PWM counters
                 m.d.sync += current_pwm.eq(0)
                 m.d.sync += level_counter.eq(0)
-                m.d.sync += level_max.eq(1)
+                m.d.sync += level_max.eq(0)
                 
                 # Blank output before updating addresses, to help avoid ghosting
                 # ("OE" pin is active low)
@@ -346,36 +357,20 @@ class LEDPanelComponent(wiring.Component):
                 m.d.sync += col.eq(0)
                 m.next = "SENDDATA"
             with m.State("SENDDATA"):
-                # Assume data is accepted on falling edge of led_clk
+                # Data is accepted on rising edge of led_clk
                 m.d.sync += led_strobe.eq(0)
-                flash = Signal()
-                r1 = Signal()
-                g1 = Signal()
-                b1 = Signal()
-                r2 = Signal()
-                g2 = Signal()
-                b2 = Signal()
-                m.d.comb += flash.eq(current_pwm & 1)
-                
-                m.d.comb += r1.eq(row >= 7)
-                m.d.comb += g1.eq(((row >= 7) & flash) | (row >= 13))
-                m.d.comb += b1.eq((row <7) | (row >= 13) | flash)
 
-                m.d.comb += r2.eq(row < 9)
-                m.d.comb += g2.eq((row <= 2) | ((row <= 8)&flash))
-                m.d.comb += b2.eq((row <= 2) | (row > 8) | flash)
-                
+                for i in range(self.dimensions.super_rows):
+                    m.d.sync += [rgb1, rgb2][i].eq(Cat(
+                        self.rd_port.data[i].r > current_pwm,
+                        self.rd_port.data[i].g > current_pwm,
+                        self.rd_port.data[i].b > current_pwm
+                    ))
 
-                m.d.sync += rgb1.eq(Cat(r1,g1,b1))
-                m.d.sync += rgb2.eq(Cat(r2,g2,b2))
-                m.d.sync += led_clk.eq(1)
-                with m.If(col == 5):
-                    m.d.sync += rgb1.eq(1)
+                m.d.sync += led_clk.eq(0)
                 m.next = "DATACLOCK"
             with m.State("DATACLOCK"):
-                with m.If(col == 5):
-                    m.d.sync += rgb1.eq(2)
-                m.d.sync += led_clk.eq(0)
+                m.d.sync += led_clk.eq(1)
                 m.d.sync += col.eq(col+1)
                 with m.If(col == (self.dimensions.columns - 1)):
                     m.d.sync += col.eq(0)
@@ -385,11 +380,24 @@ class LEDPanelComponent(wiring.Component):
             with m.State("ENDROW"):
                 m.d.sync += oe.eq(~enable_display)
                 m.d.sync += led_strobe.eq(1)
-                m.d.sync += current_pwm.eq(current_pwm+1)
-                with m.If(current_pwm == MAX_PWM):
-                    m.d.sync += current_pwm.eq(0)
-                    m.d.sync += row.eq(row+1)
-                    m.next = "NEWROW"
+
+                # Deal with pwm levels
+                m.d.sync += level_counter.eq(level_counter+1)
+                with m.If(level_counter == level_max):
+                    m.d.sync += level_counter.eq(0)
+                    m.d.sync += level_max.eq(level_max+2)
+                
+                    m.d.sync += current_pwm.eq(current_pwm+1)
+                    with m.If(current_pwm == MAX_PWM):
+                        m.d.sync += current_pwm.eq(0)
+                        m.d.sync += row.eq(row+1)
+                        with m.If(row == (self.dimensions.rows - 1)):
+                            # End of screen
+                            m.next = "NEWSCREEN"
+                        with m.Else():
+                            m.next = "NEWROW"
+                    with m.Else():
+                        m.next = "SENDDATA"
                 with m.Else():
                     m.next = "SENDDATA"
         
