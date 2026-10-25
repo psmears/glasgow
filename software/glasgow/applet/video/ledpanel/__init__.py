@@ -452,9 +452,9 @@ class LEDPanelDriver(wiring.Component):
                 # Blank output before updating addresses, to help avoid ghosting
                 # ("OE" pin is active low)
                 m.d.sync += self.panel.oe.eq(1)
-                m.d.sync += self.panel.led_strobe.eq(0)
                 m.next = "SETADDR"
             with m.State("SETADDR"):
+                m.d.sync += self.panel.led_strobe.eq(0)
                 m.d.sync += self.panel.addr.eq(row)
                 m.d.sync += col.eq(0)
                 m.next = "SENDDATA"
@@ -480,7 +480,6 @@ class LEDPanelDriver(wiring.Component):
                 with m.Else():
                     m.next = "DATACLOCK2"
             with m.State("DATACLOCK2"):
-                m.d.sync += self.panel.led_clk.eq(0)
                 m.next = "SENDDATA"
             with m.State("ENDROW"):
                 m.d.sync += self.panel.led_clk.eq(0)
@@ -505,10 +504,9 @@ class LEDPanelDriver(wiring.Component):
                         with m.Else():
                             m.next = "NEWROW"
                     with m.Else():
-                        m.next = "SENDDATA"
+                        m.next = "SETADDR"
                 with m.Else():
-                    m.next = "SENDDATA"
-        
+                    m.next = "SETADDR"
 
         return m
 
