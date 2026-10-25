@@ -177,6 +177,52 @@ class LEDPanelInterface:
             Cmd.SET_GREEN | (pixel.g >> 4),
             Cmd.SET_BLUE | Cmd.WRITE | (pixel.b >> 4),
         ])
+
+    async def up(self):
+        await self._pipe.send([Cmd.MOVE_UP])
+
+    async def down(self):
+        await self._pipe.send([Cmd.MOVE_DOWN])
+
+    async def left(self):
+        await self._pipe.send([Cmd.MOVE_LEFT])
+
+    async def right(self):
+        await self._pipe.send([Cmd.MOVE_RIGHT])
+
+    async def home(self):
+        await self._pipe.send([Cmd.ORIGIN])
+
+    async def enable(self, on: bool):
+        await self._pipe.send([Cmd.SHOW if on else Cmd.BLANK])
+
+    async def store_pos(self):
+        await self._pipe.send([Cmd.POS_STORE])
+
+    async def recall_x(self):
+        await self._pipe.send([Cmd.POS_RCL_X])
+        
+    async def recall_y(self):
+        await self._pipe.send([Cmd.POS_RCL_Y])
+        
+    async def write_to(self, display: int):
+        if display not in range(MAX_SCREENS):
+            raise ValueError(f"Screen must be >=0 and less than {MAX_SCREENS}")
+        await self._pipe.send([Cmd.SET_WRITE | display])
+        
+    async def display_from(self, display: int):
+        if display not in range(MAX_SCREENS):
+            raise ValueError(f"Screen must be >=0 and less than {MAX_SCREENS}")
+        await self._pipe.send([Cmd.SET_SCREEN | display])
+
+    async def image(self, fn: str):
+        import PIL.Image
+        img = PIL.Image.open(fn).convert("RGB")
+        for x in range(32):
+            for y in range(32):
+                p = Pixel(*img.getpixel((x,y)))
+                await self.set_pixel(p)
+        
         
         
 class LEDPanelController(wiring.Component):
@@ -431,8 +477,14 @@ class LEDPanelDriver(wiring.Component):
                     m.d.sync += col.eq(0)
                     m.next = "ENDROW"
                 with m.Else():
-                    m.next = "SENDDATA"
+                    m.next = "DATACLOCK2"
+            with m.State("DATACLOCK2"):
+                m.d.sync += self.panel.led_clk.eq(0)
+                m.next = "SENDDATA"
             with m.State("ENDROW"):
+                m.d.sync += self.panel.led_clk.eq(0)
+                m.next = "ENDROW2"
+            with m.State("ENDROW2"):
                 m.d.sync += self.panel.oe.eq(~enable_display)
                 m.d.sync += self.panel.led_strobe.eq(1)
 
@@ -502,7 +554,7 @@ class DisplayLEDPanelApplet(GlasgowAppletV2):
 
     async def run(self, args):
         while True:
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(1)
             p = Pixel(
                 random.randrange(256),
                 random.randrange(256),
