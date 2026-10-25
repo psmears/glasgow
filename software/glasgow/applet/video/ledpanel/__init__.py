@@ -4,6 +4,7 @@
 import asyncio
 import dataclasses
 import enum
+import random
 
 from amaranth import *
 from amaranth.lib import io, cdc, wiring, stream, data, memory
@@ -30,6 +31,10 @@ class Cmd(enum.IntEnum):
     POS_STORE  = 0b1100 # Remember the current position
     POS_RCL_X  = 0b1101 # Set the current X position to the remembered one
     POS_RCL_Y  = 0b1101 # Set the current Y position to the remembered one
+    SET_RED    = 0b1000_0000 # Set red component of current colour
+    SET_GREEN  = 0b0100_0000 # Set green component of current colour
+    SET_BLUE   = 0b0010_0000 # Set blue component of current colour
+    WRITE      = 0b0001_0000 # Set current position to current colour & move on
 
 
 
@@ -168,9 +173,9 @@ class LEDPanelInterface:
 
     async def set_pixel(self, pixel: Pixel):
         await self._pipe.send([
-            0b1000_0000 | (pixel.r >> 4),
-            0b0100_0000 | (pixel.g >> 4),
-            0b0011_0000 | (pixel.b >> 4),
+            Cmd.SET_RED | (pixel.r >> 4),
+            Cmd.SET_GREEN | (pixel.g >> 4),
+            Cmd.SET_BLUE | Cmd.WRITE | (pixel.b >> 4),
         ])
         
         
@@ -412,7 +417,8 @@ class LEDPanelDriver(wiring.Component):
 
                 for i in range(self.dimensions.super_rows):
                     m.d.sync += self.panel.rgb[i].eq(Cat(
-                        self.rd_port.data[i].r > current_pwm,
+                        #1 | (self.rd_port.data[i].r > current_pwm),
+                        col > current_pwm,
                         self.rd_port.data[i].g > current_pwm,
                         self.rd_port.data[i].b > current_pwm
                     ))
@@ -497,8 +503,13 @@ class DisplayLEDPanelApplet(GlasgowAppletV2):
 
     async def run(self, args):
         while True:
-            await asyncio.sleep(1)
-
+            await asyncio.sleep(0.1)
+            p = Pixel(
+                random.randrange(256),
+                random.randrange(256),
+                random.randrange(256),
+            )
+            await self.ledpanel_interface.set_pixel(p)
 
     @classmethod
     def tests(cls):
