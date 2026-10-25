@@ -135,10 +135,11 @@ class LEDPanelSignature(wiring.Signature):
             "rgb": Out(dimensions.rgb_pins),
         })
 
-class ScreenShapeSignature(wiring.Signature):
+class PanelControlSignature(wiring.Signature):
     def __init__(self, dimensions: LEDPanelDimensions):
         super().__init__({
-            "screen": Out(1),
+            "next_screen": Out(dimensions.screen_shape),
+            "enable": Out(1),
         })
 
 @dataclasses.dataclass
@@ -215,6 +216,9 @@ class LEDPanelInterface:
             raise ValueError(f"Screen must be >=0 and less than {MAX_SCREENS}")
         await self._pipe.send([Cmd.SET_SCREEN | display])
 
+    async def flush(self):
+        await self._pipe.flush()
+
     async def image(self, fn: str):
         import PIL.Image
         img = PIL.Image.open(fn).convert("RGB")
@@ -233,8 +237,7 @@ class LEDPanelController(wiring.Component):
         super().__init__({
             "i_stream": In(stream.Signature(8)),
             "wr_port": In(LEDWrPortSignature(self.dimensions)),
-            "next_screen": Out(ScreenShapeSignature(self.dimensions)),
-            "enable_display": Out(unsigned(1)),
+            "panel": Out(PanelControlSignature(self.dimensions)),
         })
 
     def elaborate(self, platform):
@@ -297,9 +300,9 @@ class LEDPanelController(wiring.Component):
                     with m.Case(Cmd.SET_WRITE, Cmd.SET_WRITE | 1):
                         m.d.sync += writing_screen.eq(command.command[0])
                     with m.Case(Cmd.SET_SCREEN, Cmd.SET_SCREEN | 1):
-                        m.d.sync += self.next_screen.screen.eq(command.command[0])
+                        m.d.sync += self.panel.next_screen.eq(command.command[0])
                     with m.Case(Cmd.BLANK, Cmd.SHOW):
-                        m.d.sync += self.enable_display.eq(command.command[0])
+                        m.d.sync += self.panel.enable.eq(command.command[0])
                     with m.Case(Cmd.ORIGIN):
                         m.d.sync += writing_column.eq(0)
                         m.d.sync += writing_row.eq(0)
@@ -361,7 +364,7 @@ class LEDPanelComponent(wiring.Component):
         wiring.connect(m, flipped(self.i_stream), controller.i_stream)
 
         # Connect the "next screen to show" signal
-        wiring.connect(m, controller.next_screen, driver.next_screen)
+        wiring.connect(m, controller.panel, driver.panel_control)
 
         # Connect up the panel itself
         m.submodules.led_clk_buffer = led_clk_buffer = io.Buffer("o", self._ports.led_clk)
@@ -402,7 +405,7 @@ class LEDPanelDriver(wiring.Component):
             "o_stream": Out(stream.Signature(8)),
             "rd_port": In(LEDRdPortSignature(self.dimensions)),
             "vsync": Out(unsigned(1)),
-            "next_screen": In(ScreenShapeSignature(self.dimensions)),
+            "panel_control": In(PanelControlSignature(self.dimensions)),
         })
 
     def elaborate(self, platform):
@@ -431,14 +434,12 @@ class LEDPanelDriver(wiring.Component):
         level_max = Signal(range(1 << (2 * BPP)))
         level_counter = Signal(range(1 << (2 * BPP)))
 
-        enable_display = Signal(init=1)
-
         m.d.comb += self.rd_port.addr.eq(Cat(col, row, screen))
         m.d.comb += self.rd_port.en.eq(1)
 
         with m.FSM(init="NEWROW"):
             with m.State("NEWSCREEN"):
-                m.d.sync += screen.eq(self.next_screen.screen)
+                m.d.sync += screen.eq(self.panel_control.next_screen)
                 m.d.sync += self.vsync.eq(1)
                 m.next = "NEWROW"
             with m.State("NEWROW"):
@@ -485,7 +486,7 @@ class LEDPanelDriver(wiring.Component):
                 m.d.sync += self.panel.led_clk.eq(0)
                 m.next = "ENDROW2"
             with m.State("ENDROW2"):
-                m.d.sync += self.panel.oe.eq(~enable_display)
+                m.d.sync += self.panel.oe.eq(~self.panel_control.enable)
                 m.d.sync += self.panel.led_strobe.eq(1)
 
                 # Deal with pwm levels
@@ -553,14 +554,20 @@ class DisplayLEDPanelApplet(GlasgowAppletV2):
                                                         columns=args.columns)
 
     async def run(self, args):
+        await self.ledpanel_interface.enable(True)
+        c=0
         while True:
-            await asyncio.sleep(1)
+            #await asyncio.sleep(0.05)
             p = Pixel(
                 random.randrange(256),
                 random.randrange(256),
                 random.randrange(256),
             )
             await self.ledpanel_interface.set_pixel(p)
+            c = c + 1
+            if c == (32*32):
+                await self.ledpanel_interface.flush()
+                c=0
 
     @classmethod
     def tests(cls):
