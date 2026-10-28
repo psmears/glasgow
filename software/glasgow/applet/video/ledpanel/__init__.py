@@ -4,6 +4,7 @@
 import asyncio
 import dataclasses
 import enum
+from pathlib import Path
 import random
 
 from amaranth import *
@@ -12,6 +13,8 @@ from amaranth.lib.wiring import In, Out, flipped
 
 from glasgow.support import logging
 from glasgow.applet import GlasgowAppletV2
+
+from . import TIL
 
 __all__ = [
     "Cmd",
@@ -219,11 +222,9 @@ class LEDPanelInterface:
     async def flush(self):
         await self._pipe.flush()
 
-    async def image(self, fn: str):
-        import PIL.Image
-        img = PIL.Image.open(fn).convert("RGB")
-        for x in range(32):
-            for y in range(32):
+    async def image(self, img):
+        for y in range(32):
+            for x in range(32):
                 p = Pixel(*img.getpixel((x,y)))
                 await self.set_pixel(p)
         
@@ -552,20 +553,31 @@ class DisplayLEDPanelApplet(GlasgowAppletV2):
                                                         columns=args.columns)
 
     async def run(self, args):
+        async def show_img(img):
+            nonlocal screen
+            screen = 1 - screen
+            await self.ledpanel_interface.write_to(screen)
+            await self.ledpanel_interface.image(img)
+            await self.ledpanel_interface.display_from(screen)
+            await self.ledpanel_interface.flush()
+            
         await self.ledpanel_interface.enable(True)
-        c=0
+        images = [IMAGE_DIR / img for img in IMAGES]
+        screen = 0
+        black = TIL.Image.new("RGB", (32, 32))
         while True:
-            #await asyncio.sleep(0.05)
-            p = Pixel(
-                random.randrange(256),
-                random.randrange(256),
-                random.randrange(256),
-            )
-            await self.ledpanel_interface.set_pixel(p)
-            c = c + 1
-            if c == (32*32):
-                await self.ledpanel_interface.flush()
-                c=0
+            image = TIL.Image.open(images[0])
+            for i in range(21):
+                composite = TIL.Image.blend(black, image, i/20)
+                await show_img(composite)
+                await asyncio.sleep(0.05)
+            await asyncio.sleep(2)
+            for i in range(21):
+                composite = TIL.Image.blend(image, black, i/20)
+                await show_img(composite)
+                await asyncio.sleep(0.05)
+                
+            images = images[1:] + images[:1]
 
     @classmethod
     def tests(cls):
@@ -573,6 +585,8 @@ class DisplayLEDPanelApplet(GlasgowAppletV2):
         return test.DisplayLEDPanelAppletTestCase
 # glasgow run video-ledpanel --led-clk A0 --led-strobe A1 --oe A2 --addr A3,A4,A5,A6 --rgb1 B0,B1,B2 --rgb2 B3,B4,B5 --voltage 5
 
+IMAGE_DIR = Path("/home/patrick")
+IMAGES = ["pumpkin1.ppm", "mrskeleton.ppm", "mrsspider.ppm", "Frankenstein .ppm"]
 
 # TODO: Rename to include "HUB75" in name
 # TODO: Display images
